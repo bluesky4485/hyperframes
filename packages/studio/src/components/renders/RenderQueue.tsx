@@ -19,9 +19,9 @@ interface RenderQueueProps {
   ) => void;
   isRendering: boolean;
   /**
-   * Authored dimensions of the active composition, used to derive
-   * landscape vs portrait when the user picks a 1080p or 4K scale.
-   * `null` falls back to landscape (legacy default).
+   * Authored dimensions of the active composition. Used to pick the
+   * matching preset (landscape / portrait / square) when the user selects
+   * a 1080p or 4K scale. `null` falls back to landscape (legacy default).
    */
   compositionDimensions?: CompositionDimensions | null;
 }
@@ -39,11 +39,26 @@ const SCALE_LABEL: Record<RenderScale, string> = {
   "4k": "4K",
 };
 
-function isPortraitComp(dims: CompositionDimensions | null | undefined): boolean {
-  // Squares and missing dims fall through to landscape — matches the legacy
-  // default ("landscape" was the first preset). The auto option exists for
-  // users who want exact authored dimensions.
-  return dims != null && dims.height > dims.width;
+// Mirrors `CANVAS_DIMENSIONS` in @hyperframes/core. Studio can't import from
+// the core barrel (it transitively pulls in node:fs) and the values are stable.
+const CANVAS_DIMENSIONS: Record<ResolutionPreset, CompositionDimensions> = {
+  landscape: { width: 1920, height: 1080 },
+  portrait: { width: 1080, height: 1920 },
+  "landscape-4k": { width: 3840, height: 2160 },
+  "portrait-4k": { width: 2160, height: 3840 },
+  square: { width: 1080, height: 1080 },
+  "square-4k": { width: 2160, height: 2160 },
+};
+
+type CompAspect = "landscape" | "portrait" | "square";
+
+function compAspect(dims: CompositionDimensions | null | undefined): CompAspect {
+  // Missing dims fall through to landscape (legacy default — "landscape" was
+  // the first preset). Studio shows resolved dims inline, so the user can see
+  // when this fallback is in effect.
+  if (dims == null) return "landscape";
+  if (dims.width === dims.height) return "square";
+  return dims.height > dims.width ? "portrait" : "landscape";
 }
 
 function resolveResolution(
@@ -51,9 +66,13 @@ function resolveResolution(
   dims: CompositionDimensions | null | undefined,
 ): ResolutionPreset | "auto" {
   if (scale === "auto") return "auto";
-  const portrait = isPortraitComp(dims);
-  if (scale === "1080p") return portrait ? "portrait" : "landscape";
-  return portrait ? "portrait-4k" : "landscape-4k";
+  const aspect = compAspect(dims);
+  if (scale === "1080p") return aspect;
+  return aspect === "landscape"
+    ? "landscape-4k"
+    : aspect === "portrait"
+      ? "portrait-4k"
+      : "square-4k";
 }
 
 function resolvedDimensions(
@@ -61,11 +80,24 @@ function resolvedDimensions(
   dims: CompositionDimensions | null | undefined,
 ): CompositionDimensions | null {
   if (scale === "auto") return dims ?? null;
-  const portrait = isPortraitComp(dims);
-  if (scale === "1080p") {
-    return portrait ? { width: 1080, height: 1920 } : { width: 1920, height: 1080 };
-  }
-  return portrait ? { width: 2160, height: 3840 } : { width: 3840, height: 2160 };
+  const preset = resolveResolution(scale, dims);
+  return preset === "auto" ? null : CANVAS_DIMENSIONS[preset];
+}
+
+// Mirrors the producer's resolveDeviceScaleFactor validation
+// (renderOrchestrator.ts:608): the chosen preset must match the comp's aspect
+// ratio exactly (cross-multiplied), can't downsample, and must be an integer
+// scale factor. Without this guard the user can pick a preset that throws at
+// render time — e.g. 1080p on a 1080×1080 square or 1080p on a 1280×720 comp
+// (1.5× isn't integer).
+function scaleApplies(scale: RenderScale, dims: CompositionDimensions | null | undefined): boolean {
+  if (scale === "auto" || dims == null) return true;
+  const preset = resolveResolution(scale, dims);
+  if (preset === "auto") return true;
+  const target = CANVAS_DIMENSIONS[preset];
+  if (target.width * dims.height !== target.height * dims.width) return false;
+  if (target.width < dims.width) return false;
+  return Number.isInteger(target.width / dims.width);
 }
 
 function scaleOptionLabel(
@@ -171,6 +203,11 @@ function FormatExportButton({
   const [quality, setQuality] = useState<"draft" | "standard" | "high">("standard");
   const [scale, setScale] = useState<RenderScale>("auto");
 
+  // If the user previously picked 1080p / 4K for a 16:9 comp and then switches
+  // to a square (or any non-matching) comp, fall back to "auto" without
+  // discarding their preference — switching back to 16:9 re-applies it.
+  const effectiveScale: RenderScale = scaleApplies(scale, compositionDimensions) ? scale : "auto";
+
   // MOV (ProRes) is a fixed-quality codec — quality selector has no effect.
   const showQuality = format !== "mov";
 
@@ -182,13 +219,13 @@ function FormatExportButton({
           (feature-flag, etc.), move `rounded-l` to whichever element ends up
           leftmost. */}
       <select
-        value={scale}
+        value={effectiveScale}
         onChange={(e) => setScale(e.target.value as RenderScale)}
         disabled={isRendering}
         className="h-5 px-1 text-[10px] rounded-l bg-neutral-800 border border-neutral-700 text-neutral-300 outline-none disabled:opacity-50"
       >
         {SCALE_OPTION_ORDER.map((value) => (
-          <option key={value} value={value}>
+          <option key={value} value={value} disabled={!scaleApplies(value, compositionDimensions)}>
             {scaleOptionLabel(value, compositionDimensions)}
           </option>
         ))}
@@ -220,7 +257,7 @@ function FormatExportButton({
       </select>
       <button
         onClick={() =>
-          onStartRender(format, quality, resolveResolution(scale, compositionDimensions))
+          onStartRender(format, quality, resolveResolution(effectiveScale, compositionDimensions))
         }
         disabled={isRendering}
         className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded-r bg-studio-accent text-[#09090B] hover:brightness-110 transition-colors disabled:opacity-50"
