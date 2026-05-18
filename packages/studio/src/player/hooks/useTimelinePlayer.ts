@@ -43,27 +43,6 @@ import {
   shouldMutePreviewAudio,
 } from "../lib/timelineIframeHelpers";
 
-function patchRuntimeClockDuration(win: IframeWindow, targetDuration: number): void {
-  try {
-    const rootEl = win.document?.querySelector("[data-composition-id]");
-    const rootId = rootEl?.getAttribute("data-composition-id");
-    const tl = rootId && win.__timelines?.[rootId];
-    if (tl && typeof tl.duration === "function" && tl.duration() < targetDuration) {
-      const tlWithTo = tl as typeof tl & {
-        to?: (t: object, v: { duration: number }, p: number) => void;
-      };
-      if (typeof tlWithTo.to === "function") {
-        tlWithTo.to({}, { duration: 0 }, targetDuration);
-      }
-    }
-    if (typeof win.__hfForceTimelineRebind === "function") {
-      win.__hfForceTimelineRebind();
-    }
-  } catch {
-    // cross-origin or missing runtime — non-fatal
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -120,7 +99,7 @@ export function useTimelinePlayer() {
       if (
         Number.isFinite(nextDuration) &&
         (nextDuration ?? 0) > 0 &&
-        (nextDuration ?? 0) > state.duration
+        nextDuration !== state.duration
       ) {
         setDuration(nextDuration ?? 0);
       }
@@ -139,58 +118,57 @@ export function useTimelinePlayer() {
 
       const playerAdapter =
         win.__player && typeof win.__player.play === "function" ? win.__player : null;
-      if (getAdapterDuration(playerAdapter) > 0) {
-        const docDur = readTimelineDurationFromDocument(iframe?.contentDocument);
-        if (docDur > 0 && docDur > playerAdapter!.getDuration()) {
-          patchRuntimeClockDuration(win, docDur);
-        }
+      const docDuration = readTimelineDurationFromDocument(iframe.contentDocument);
+      const adapterDur = getAdapterDuration(playerAdapter);
+
+      if (adapterDur > 0 && docDuration <= adapterDur) {
         return playerAdapter;
       }
 
       if (win.__timeline) {
         const adapter = wrapTimeline(win.__timeline);
-        if (getAdapterDuration(adapter) > 0) return adapter;
+        const dur = getAdapterDuration(adapter);
+        if (dur > 0 && docDuration <= dur) return adapter;
       }
 
       if (win.__timelines) {
         const keys = Object.keys(win.__timelines);
         if (keys.length > 0) {
-          // Resolve the root composition id from the DOM — the outermost
-          // `[data-composition-id]` element is the master. Without this,
-          // Object.keys() order would let a sub-composition's timeline
-          // hijack play/pause/seek and the duration readout.
           const rootId = iframe?.contentDocument
             ?.querySelector("[data-composition-id]")
             ?.getAttribute("data-composition-id");
           const key = rootId && rootId in win.__timelines ? rootId : keys[keys.length - 1];
           const adapter = wrapTimeline(win.__timelines[key]);
-          if (getAdapterDuration(adapter) > 0) return adapter;
+          const dur = getAdapterDuration(adapter);
+          if (dur > 0 && docDuration <= dur) return adapter;
         }
       }
 
-      const fallbackDuration = Math.max(
+      const effectiveDuration = Math.max(
         usePlayerStore.getState().duration,
-        readTimelineDurationFromDocument(iframe.contentDocument),
+        docDuration,
+        adapterDur,
       );
+      const baseAdapter = playerAdapter;
       if (
-        playerAdapter &&
-        fallbackDuration > 0 &&
-        (typeof playerAdapter.renderSeek === "function" || typeof playerAdapter.seek === "function")
+        baseAdapter &&
+        effectiveDuration > 0 &&
+        (typeof baseAdapter.renderSeek === "function" || typeof baseAdapter.seek === "function")
       ) {
         const cached = staticSeekAdapterRef.current;
-        if (cached?.player === playerAdapter && cached.duration === fallbackDuration) {
+        if (cached?.player === baseAdapter && cached.duration === effectiveDuration) {
           return cached.adapter;
         }
         cached?.adapter.pause();
         const adapter = createStaticSeekPlaybackAdapter(
-          playerAdapter,
-          fallbackDuration,
+          baseAdapter,
+          effectiveDuration,
           getDefaultStaticSeekPlaybackClock(win),
           () => usePlayerStore.getState().playbackRate,
         );
         staticSeekAdapterRef.current = {
-          player: playerAdapter,
-          duration: fallbackDuration,
+          player: baseAdapter,
+          duration: effectiveDuration,
           adapter,
         };
         return adapter;
@@ -382,13 +360,7 @@ export function useTimelinePlayer() {
         pendingSeekRef.current = Math.max(0, time);
         return false;
       }
-      const adapterDur = adapter.getDuration();
-      const state = usePlayerStore.getState();
-      const maxEnd =
-        state.elements.length > 0
-          ? Math.max(...state.elements.map((el) => el.start + el.duration))
-          : 0;
-      const duration = Math.max(0, adapterDur, maxEnd);
+      const duration = Math.max(0, adapter.getDuration());
       const nextTime = Math.max(0, duration > 0 ? Math.min(duration, time) : time);
       adapter.seek(nextTime, options);
       liveTime.notify(nextTime); // Direct DOM updates (playhead, timecode, progress) — no re-render

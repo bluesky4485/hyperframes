@@ -57,5 +57,4 @@ export type IframeWindow = Window & {
   __timeline?: TimelineLike;
   __timelines?: Record<string, TimelineLike>;
   __clipManifest?: ClipManifest;
-  __hfForceTimelineRebind?: () => void;
 };
