@@ -115,6 +115,47 @@ After lint passes, snapshots are taken, and you've fixed every issue you saw —
 
 So in your report, name the hex codes you used, the captured asset paths you placed, the headline `font-size`, and the GSAP timeline's last `tl.fromTo(...)` timestamp. Brief, concrete, true. If anything diverges from DESIGN.md or the storyboard, say so explicitly — the main agent can decide whether to accept the divergence or send you back to fix it. Surprises caught at this hand-off cost minutes; surprises caught at Step 6 cost iterations.
 
+### FLAG protocol — required phrasing for non-blocking issues
+
+When you find any of these, surface them as **FLAGS** in your report, not as conditional suggestions:
+
+- Visual states that briefly look broken (empty containers, hanging elements, gap moments)
+- Spec ambiguities you had to resolve by guessing
+- Linter bugs you worked around
+- Tween values you changed from the spec because they wouldn't fit
+
+**Forbidden phrasing:** "if the X feels too long, you could...", "consider tweaking Y", "might want to..."
+
+**Required phrasing — concrete, actionable, with line numbers:**
+
+```
+FLAG: at beat-local t=1.2s the doc card is visible but its inner content is still
+       opacity 0 — a 0.4s empty-panel window.
+       RECOMMENDED FIX: pull title typewriter from 1.6s → 1.4s
+       in compositions/beat-5-name.html line 234.
+```
+
+The main agent MUST EITHER apply each FLAG's fix OR write a one-sentence rejection with reason. Silently dropping a FLAG is a verification failure that gets caught at Step 6 (or worse, in the user's preview).
+
+### Spec ambiguity — escalate, don't paper over
+
+If STORYBOARD.md gives you a transition or transformation but doesn't establish the **start** state, do NOT guess. Examples of ambiguity worth flagging:
+
+- "Row 1 transitions from Huly Blue to Huly Orange at 3.5s" — but Row 1's initial color isn't specified
+- "Headline grows" — but the start size isn't specified
+- "Cards slide in" — but the off-screen position isn't specified
+- "Subhead appears after the headline" — but exact timing offset isn't specified
+
+**Required action:** FLAG the ambiguity in your report verbatim:
+
+```
+FLAG: STORYBOARD.md beat 3 says "Row 1 transitions blue → orange at 3.5s" but
+       Row 1's initial color is not specified anywhere. I interpreted Row 1 starts
+       blue and tweened to orange. CONFIRM or correct.
+```
+
+The main agent then confirms or corrects before Step 6 advances. Picking an interpretation silently means the build looks "fine" while diverging from intent — and the user only notices in motion.
+
 ---
 
 ## Continuous motion — the most important rule

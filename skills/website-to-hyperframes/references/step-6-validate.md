@@ -17,6 +17,8 @@ Score each item 1–5. If any item scores below 3, fix it before continuing. **D
 [ ] No mid-video dark frames              → state explicitly which frames (if any) are dark and why
 [ ] Brand assets actually visible         → for each beat, name which captured SVG / illustration / screenshot is on screen and at what timestamp. If a beat shows zero captured assets, justify why.
 [ ] Audio duration matches video ±0.5s    → paste both numbers
+[ ] animation-map.json generated          → run `node <repo-root>/skills/hyperframes/scripts/animation-map.mjs <project-dir>`; confirm every beat has events listed and no bbox/flag warnings
+[ ] Audio + motion verification done      → see "Audio + motion verification" below; played the full preview, confirmed SFX lands at storyboard timestamps
 [ ] Critic sub-agent run                  → paste its single biggest quality gap finding, verbatim
 ```
 
@@ -62,9 +64,24 @@ Some are style suggestions you can safely ignore:
 - **Deprecated attributes** (data-layer, data-end) — still work, just not preferred
 - **Dense tracks** — informational, not a bug
 
-**WCAG contrast false positives** — the validator samples text colors at fixed timestamps. Elements that are at `opacity: 0` (pre-entrance) or mid-fade at those sample timestamps get measured against the background as if they were fully visible, which produces spurious contrast failures. Before changing a color to clear a WCAG warning, verify visually that the element is actually unreadable when on-screen at full opacity. If it's only flagged for pre-entrance / exit moments, the warning is a sampling artifact, not a real failure. Bumping the color to "fix" these false positives changes the brand identity for no real benefit.
+**WCAG contrast warnings — per-warning verification, not blanket dismissal.**
 
-Don't blindly ignore 158 warnings. Don't blindly fix all of them either. Read them.
+The validator samples text colors at fixed timestamps. Elements at `opacity: 0` (pre-entrance) or mid-fade get measured as if fully visible — real false positives exist. BUT this is a per-warning judgment, not a blanket excuse.
+
+**For EACH warning the validator emits, paste this block in your verdict:**
+
+```
+Warning N: <quote the validator output verbatim>
+  Element: <selector>
+  Sampled timestamp: t=<n>
+  At t=<n>, is this element on-screen at full opacity? (yes/no — confirm by viewing snapshot at that timestamp)
+  Verdict: REAL ISSUE / SAMPLING ARTIFACT (justify in one sentence)
+  Action: <hex change at line N>  OR  NONE because <reason>
+```
+
+**Forbidden:** writing "the N warnings are mostly transition-window false positives" without per-warning evidence. That phrasing alone fails the gate. The validator does not report 158 warnings as a group — it reports them individually, and you verify them individually.
+
+Don't blindly ignore. Don't blindly fix. Verify each.
 
 ## Visual Verification (snapshot)
 
@@ -156,6 +173,28 @@ If you cannot find any problems and want to score everything 4–5, you are not 
 
 Read every score. Fix anything below 3 before showing the user. If the CTA scores below 3, fix the CTA. Do not rationalize low scores as "the user can decide."
 
+## Audio + motion verification — separate from snapshot verification
+
+Snapshots are silent stills. They prove what FRAMES look like, but they do NOT prove:
+
+- That audio fires at all
+- That SFX lands exactly when the visual moment lands (target: ±0.1s, hard limit: ±0.5s)
+- That narration syncs to per-beat content
+- That transitions feel right in motion
+
+After snapshot DoD items pass, **play the preview Studio URL in a browser** (or via Playwright if available). Don't scrub — actually play it from start to end at 1.0× speed. Then verify:
+
+```
+[ ] Played full video front-to-back at 1.0× — actually played, not scrubbed
+[ ] For each SFX in STORYBOARD.md: sound lands at the visual moment within ±0.1s
+    (Beat N SFX `<file>`: storyboard says t=<x>s → heard at t=<y>s → drift <z>s)
+[ ] Narration delivers the right line per beat (no off-by-one or missing lines)
+[ ] No moments where audio is present but visual is unintentionally mid-transition
+[ ] Audio audible and not clipped/peaked
+```
+
+**If you cannot play the preview** (no Playwright in this session, CLI-only environment), state this explicitly: "Audio + motion verification deferred to user — no preview tool available in this session." That is honest disclosure. **Silently skipping this check while presenting a "looks good" verdict fails the gate.**
+
 ## Preview (always do this)
 
 Always start the preview so the user can see and scrub through the project:
@@ -171,6 +210,35 @@ http://localhost:<port>/#project/<project-name>
 ```
 
 Use the actual port and project name from the preview command output. Do NOT present `index.html` as the project link — that's the source file. The user-facing project is the running Studio preview.
+
+### Honest disclosure — REQUIRED in your final summary
+
+Your final message to the user MUST end with these two sections, even if everything passed. Both sections appear AFTER the preview URL, BEFORE you stop talking.
+
+```
+**What I verified:**
+- <one bullet per DoD item that passed, with the actual evidence cited inline>
+  (e.g. "Lint: zero errors — output pasted above")
+  (e.g. "Per-beat read: 7/7 beats PASS, evidence blocks above")
+  (e.g. "WCAG: 3 warnings flagged, all 3 verified as sampling artifacts — see verdicts above")
+
+**What I did NOT verify (spot-check these):**
+- <one bullet per item you skipped, deferred, or could not complete — and why>
+  (e.g. "Audio + motion verification deferred — no Playwright in this session. SFX timing is computed but unconfirmed in playback.")
+  (e.g. "animation-map.json skipped — script not found at expected path; manually confirmed timeline coverage in per-beat reads instead.")
+  (e.g. "Beat 5 has a 0.4s window where the doc card is visible but contents are still opacity 0 — sub-agent flagged it, I chose not to fix because it was below my threshold; worth your eye.")
+```
+
+The user reads this section to know what to spot-check.
+
+**UNACCEPTABLE final summaries:**
+
+- "Looks great, ready to ship" (no disclosure)
+- "All checks pass" (when one was actually skipped)
+- "Sub-agents confirmed everything" (delegating trust without verifying)
+- Omitting the "What I did NOT verify" section because you happened to verify everything (still include it — write "None" if true, but the section header must appear).
+
+Lying or omitting here is worse than skipping a check honestly. A short user spot-check beats a hidden broken video every time.
 
 ## Render (on-demand only)
 
